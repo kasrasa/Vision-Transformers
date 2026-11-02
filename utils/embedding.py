@@ -45,7 +45,7 @@ class PatchEmbeddingModel(nn.Module):
     def forward(self, x):
         """Map [B, N, patch_width] to patch embeddings and [B, N + 1, hidden_dim]."""
         embedded_patches = self.embedder(x)
-        tokens = prepend_classification_token(embedded_patches, self.cls_token)
+        tokens = torch.cat([self.cls_token.expand(x.size(0), -1, -1), embedded_patches], dim=1)
         tokens = self.positional_encoding(tokens)
 
         return {
@@ -53,7 +53,6 @@ class PatchEmbeddingModel(nn.Module):
             "patches_with_cls_token": tokens,
             "hidden_dim": self.hidden_dim,
         }
-
 
 class PositionalEncoding(nn.Module):
     """Learned absolute positions, including a position for the classification token."""
