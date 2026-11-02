@@ -51,6 +51,8 @@ class PatchEmbeddingModel(nn.Module):
         return {
             "embedded_patches": embedded_patches,
             "patches_with_cls_token": tokens,
+            "cls_token": self.cls_token,
+            "positional_encoding": self.positional_encoding.pe,
             "hidden_dim": self.hidden_dim,
         }
 
