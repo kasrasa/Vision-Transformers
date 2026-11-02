@@ -2,25 +2,24 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-def display_patches(patches, num_patches_to_display = 5, figsize=(15, 3)):
+def display_patches(patches, patch_size, num_patches_to_display=5, figsize=(15, 3)):
     """
-    Displays a specified number of image patches randomly in the image.
+    Display random patches from the flattened output of patchify.
 
     Args:
-        patches (torch.Tensor): A tensor containing batches of image patches.
+        patches (torch.Tensor): A tensor of shape (batch_size, num_patches, channels * patch_size ** 2).
+        patch_size (int): The side length used when extracting patches.
         num_patches_to_display (int): Number of patches to display.
         figsize (tuple): Size of the figure.
     """
-    # Randomly select batches and patches to display
-    batch_size = num_patches_to_display if patches.size(0) > 1 else 1
-    batch_indices = np.random.choice(patches.size(0), batch_size, replace=False)
+    channels = patches.size(-1) // (patch_size ** 2)
+    batch_indices = np.random.randint(0, patches.size(0), num_patches_to_display)
     patch_indices = np.random.randint(0, patches.size(1), num_patches_to_display)
-    selected_patches = patches[batch_indices][:, patch_indices]
 
-    # Create a figure to display the patches
-    plt.figure(figsize=figsize)
-    for i in range(num_patches_to_display):
-        plt.subplot(1, num_patches_to_display, i + 1)
-        plt.imshow(selected_patches[i].permute(1, 2, 0).cpu().numpy())
-        plt.axis('off')
+    _, axes = plt.subplots(1, num_patches_to_display, figsize=figsize, squeeze=False)
+    for axis, batch_index, patch_index in zip(axes[0], batch_indices, patch_indices):
+        patch = patches[batch_index, patch_index].reshape(channels, patch_size, patch_size)
+        axis.imshow(patch.permute(1, 2, 0).detach().cpu().numpy())
+        axis.set_title(f"Image {batch_index}, patch {patch_index}")
+        axis.axis('off')
     plt.show()
