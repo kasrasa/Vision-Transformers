@@ -67,6 +67,33 @@ class PositionalEncoding(nn.Module):
         return x + self.pe
 
 
+class SinusoidalPositionalEncoding(nn.Module):
+    """Original fixed sine/cosine variant, kept for a later comparison."""
+
+    def __init__(self, embedding_dim, max_len=5000):
+        super().__init__()
+        self.embedding_dim = embedding_dim
+
+        # Create a matrix of shape (max_len, embedding_dim) to hold the positional encodings
+        pe = torch.zeros(max_len, embedding_dim)
+        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1) # each token's position
+        div_term = torch.exp(torch.arange(0, embedding_dim, 2).float() * (-torch.log(torch.tensor(10000.0)) / embedding_dim))
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+        pe = pe.unsqueeze(0)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+        """
+        Adds positional encoding to the input tensor.
+
+        Args:
+            x (torch.Tensor): A tensor of shape (batch_size, num_patches, embedding_dim).
+        """
+        x = x + self.pe[:, :x.size(1), :]
+        return x
+
+
 def prepend_classification_token(embedded_patches, cls_token):
     """
     Share the model's learned classification token across the current batch.
