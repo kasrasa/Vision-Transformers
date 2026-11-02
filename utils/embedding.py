@@ -91,15 +91,3 @@ class SinusoidalPositionalEncoding(nn.Module):
         """
         x = x + self.pe[:, :x.size(1), :]
         return x
-
-
-def prepend_classification_token(embedded_patches, cls_token):
-    """
-    Share the model's learned classification token across the current batch.
-
-    Args:
-        embedded_patches (torch.Tensor): A tensor of shape (batch_size, num_patches, hidden_dim).
-        cls_token (torch.Tensor): A learned parameter of shape (1, 1, hidden_dim).
-    """
-    batch_size = embedded_patches.size(0)
-    return torch.cat((cls_token.expand(batch_size, -1, -1), embedded_patches), dim=1)
