@@ -45,7 +45,7 @@ def validate(model, dataloader, criterion, device):
 
 def train_model(model, train_dataloader, val_dataloader, num_epochs, learning_rate,
                 device, checkpoint_path=None, weight_decay=0.01,
-                early_stopping_patience=10, lr_patience=3, min_delta=0.001):
+                enable_early_stopping = True, lr_patience=3, min_delta=0.001):
     """Train up to num_epochs and restore the lowest-validation-loss weights.
 
     Halve the learning rate after lr_patience + 1 stalled epochs. Stop after
@@ -53,16 +53,19 @@ def train_model(model, train_dataloader, val_dataloader, num_epochs, learning_ra
     Checkpoints still track the actual minimum loss, including smaller drops.
     History stays in memory; checkpoint file handling lives in utils.io.
     """
+    early_stopping_patience=10
+
     model.to(device)
     criterion = CrossEntropyLoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode="min", factor=0.5, patience=lr_patience,
-        threshold=min_delta, threshold_mode="abs", min_lr=1e-6,
-    )
+    if enable_early_stopping:
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode="min", factor=0.5, patience=lr_patience,
+            threshold=min_delta, threshold_mode="abs", min_lr=1e-6,
+        )
     history = {"train_loss": [], "val_loss": [], "val_accuracy": [],
                "learning_rate": [], "train_seconds": [], "validation_seconds": []}
-    best_val_loss = patience_loss = float("inf")
+    best_val_accuracy = patience_accuracy = -1.0
     stalled_epochs = 0
 
     for epoch in range(1, num_epochs + 1):
@@ -83,36 +86,38 @@ def train_model(model, train_dataloader, val_dataloader, num_epochs, learning_ra
         history["train_seconds"].append(train_seconds)
         history["validation_seconds"].append(validation_seconds)
 
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
+        if val_accuracy > best_val_accuracy:
+            best_val_accuracy = val_accuracy
             best_weights = deepcopy(model.state_dict())
-            history.update(best_epoch=epoch, best_val_loss=val_loss,
-                           val_accuracy_at_best_loss=val_accuracy)
+            history.update(best_epoch=epoch, best_val_accuracy=val_accuracy,
+                           val_loss_at_best_accuracy=val_loss)
             if checkpoint_path is not None:
                 save_checkpoint(model, checkpoint_path, epoch, val_loss, val_accuracy)
 
         # Small improvements can accumulate before resetting the patience counter.
-        if val_loss < patience_loss - min_delta:
-            patience_loss = val_loss
+        if val_accuracy > patience_accuracy + min_delta:
+            patience_accuracy = val_accuracy
             stalled_epochs = 0
         else:
             stalled_epochs += 1
-        scheduler.step(val_loss)
+        if enable_early_stopping:
+            scheduler.step(val_accuracy)
 
         print(f"Epoch {epoch}/{num_epochs}: train loss={train_loss:.4f}, "
               f"val loss={val_loss:.4f}, val accuracy={val_accuracy:.4f}, "
               f"lr={learning_rate_used:.2g}, "
               f"train={train_seconds:.2f}s, val={validation_seconds:.2f}s")
         next_lr = optimizer.param_groups[0]["lr"]
-        if next_lr < learning_rate_used:
-            print(f"Learning rate reduced to {next_lr:.2g}")
-        if stalled_epochs >= early_stopping_patience:
-            print(f"Early stopping: no meaningful validation-loss improvement "
-                  f"for {early_stopping_patience} epochs.")
-            break
+        if enable_early_stopping:
+            if next_lr < learning_rate_used:
+                print(f"Learning rate reduced to {next_lr:.2g}")
+            if stalled_epochs >= early_stopping_patience:
+                print(f"Early stopping: no meaningful validation-loss improvement "
+                    f"for {early_stopping_patience} epochs.")
+                break
 
     model.load_state_dict(best_weights)
     model.eval()
     print(f"Restored epoch {history['best_epoch']} "
-          f"(lowest validation loss={history['best_val_loss']:.4f})")
+          f"(lowest validation loss={history['best_val_accuracy']:.4f})")
     return history

@@ -1,5 +1,8 @@
 import torch.nn as nn
 
+from utils.patch_embedding import PatchEmbeddingModel
+from utils.transformer_encoder import TransformerEncoderLayer
+from utils.mlp_head import MLPHead
 from utils.patch_embedding import patchify
 
 
@@ -35,10 +38,6 @@ def build_vision_transformer(image_size=224, patch_size=16, hidden_dim=192,
     Each encoder block owns independent parameters. The final LayerNorm remains
     after the entire stack. Defaults preserve the small learning configuration.
     """
-    from utils.patch_embedding import PatchEmbeddingModel
-    from utils.transformer_encoder import TransformerEncoderLayer
-    from utils.mlp_head import MLPHead
-
     model = VisionTransformer(
         patch_embedder=PatchEmbeddingModel(
             embedding_dim=3 * patch_size ** 2,

@@ -23,3 +23,31 @@ def display_patches(patches, patch_size, num_patches_to_display=5, figsize=(15, 
         axis.set_title(f"Image {batch_index}, patch {patch_index}")
         axis.axis('off')
     plt.show()
+
+
+def plot_history(history):
+    train_loss = history["train_loss"]
+    val_loss = history["val_loss"]
+    val_accuracy = history["val_accuracy"]
+    epochs = range(1, len(train_loss) + 1)
+
+    _, axes = plt.subplots(1, 2, figsize=(12, 5))
+
+    axes[0].plot(epochs, train_loss, label="Training loss")
+    axes[0].plot(epochs, val_loss, label="Validation loss")
+    axes[0].set_xlabel("Epoch")
+    axes[0].set_ylabel("Loss")
+    axes[0].set_title("Training and validation loss")
+    axes[0].legend()
+    axes[0].grid(True)
+
+    axes[1].plot(epochs, val_accuracy, label="Validation accuracy", color="green")
+    axes[1].set_xlabel("Epoch")
+    axes[1].set_ylabel("Accuracy")
+    axes[1].set_title("Validation accuracy")
+    axes[1].set_ylim(0, 1)
+    axes[1].legend()
+    axes[1].grid(True)
+
+    plt.tight_layout()
+    plt.show()
