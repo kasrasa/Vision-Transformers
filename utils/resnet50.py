@@ -55,6 +55,8 @@ class BottleNeckResNet50(nn.Module):
 
 
 class ResNet50(nn.Module):
+    """ResNet-50 v1.5 built from bottleneck blocks, returning class logits."""
+
     def __init__(self, num_classes=10):
         super().__init__()
         self.in_channels = 64
@@ -70,12 +72,20 @@ class ResNet50(nn.Module):
         self.layer4 = self._make_layer(512, 3, stride=2)
 
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = nn.Linear(512 * 4, num_classes)
+        self.fc = nn.Linear(512 * BottleNeckResNet50.expansion, num_classes)
+
+        # Match the initialization used by the reference ResNet implementation.
+        for module in self.modules():
+            if isinstance(module, nn.Conv2d):
+                nn.init.kaiming_normal_(module.weight, mode="fan_out", nonlinearity="relu")
+            elif isinstance(module, nn.BatchNorm2d):
+                nn.init.ones_(module.weight)
+                nn.init.zeros_(module.bias)
 
     def _make_layer(self, out_channels, blocks, stride=1):
         layers = []
         layers.append(BottleNeckResNet50(self.in_channels, out_channels, stride))
-        self.in_channels = out_channels * 4
+        self.in_channels = out_channels * BottleNeckResNet50.expansion
         for _ in range(1, blocks):
             layers.append(BottleNeckResNet50(self.in_channels, out_channels))
 
@@ -93,7 +103,7 @@ class ResNet50(nn.Module):
         x = self.layer4(x)
 
         x = self.avgpool(x)
-        x = torch.flatten(x, 1)
+        x = x.flatten(1)
         x = self.fc(x)
 
         return x
