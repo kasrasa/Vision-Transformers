@@ -11,14 +11,15 @@ def synchronize_device(timing_device):
 
 
 def measure_inference_ms(timing_model, timing_images, timing_device, warmups=5, repeats=20):
+    """Time completed forward passes on a batch already moved to the device."""
     timing_model.eval()
     with torch.inference_mode():
         for _ in range(warmups):
             timing_model(timing_images)
+        # Finish warmup before timing; each repeat also finishes before the next.
         synchronize_device(timing_device)
         times_ms = []
         for _ in range(repeats):
-            synchronize_device(timing_device)
             start = perf_counter()
             timing_model(timing_images)
             synchronize_device(timing_device)

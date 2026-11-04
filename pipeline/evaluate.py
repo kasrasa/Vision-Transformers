@@ -1,32 +1,27 @@
-import json
-from pathlib import Path
 from time import perf_counter
 
 import numpy as np
 import torch
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, confusion_matrix
 
-from utils.checkpoint_utils import load_best_checkpoint
-from utils.inference_utils import synchronize_device
+from utils.io import load_checkpoint
 
 
-def evaluate_model(model, test_dataloader, device, checkpoint_path=None, results_path=None):
+def evaluate_model(model, test_dataloader, device, checkpoint_path=None):
     """Score fixed weights; evaluation never selects or overwrites a checkpoint.
 
     evaluation_seconds covers dataset loading, transfers, forward passes, and
-    metrics. Checkpoint loading and writing the optional JSON are outside it.
+    metrics. Checkpoint loading is outside it; evaluation writes no files.
     """
     device = torch.device(device)
     model.to(device)
-    checkpoint = None
     if checkpoint_path is not None:
-        checkpoint = load_best_checkpoint(model, checkpoint_path, device)
+        load_checkpoint(model, checkpoint_path, device)
     model.eval()
     all_labels = []
     all_predictions = []
     total_loss = 0.0
     total_samples = 0
-    synchronize_device(device)
     start = perf_counter()
 
     with torch.no_grad():
@@ -46,22 +41,8 @@ def evaluate_model(model, test_dataloader, device, checkpoint_path=None, results
         "recall": recall_score(all_labels, all_predictions, labels=class_labels, average="weighted", zero_division=0),
         "confusion_matrix": confusion_matrix(all_labels, all_predictions, labels=class_labels),
         "loss": total_loss / total_samples,
-        "evaluation_samples": total_samples,
-        "parameter_count": sum(p.numel() for p in model.parameters()),
-        "device": str(device),
     }
-    synchronize_device(device)
     metrics["evaluation_seconds"] = perf_counter() - start
-    metrics["evaluation_images_per_second"] = total_samples / metrics["evaluation_seconds"]
-    if checkpoint is not None:
-        metrics["checkpoint_path"] = str(checkpoint_path)
-        metrics["checkpoint_epoch"] = checkpoint["epoch"]
-    if results_path is not None:
-        results_path = Path(results_path)
-        results_path.parent.mkdir(parents=True, exist_ok=True)
-        serializable = {name: value.tolist() if isinstance(value, np.ndarray) else value
-                        for name, value in metrics.items()}
-        results_path.write_text(json.dumps(serializable, indent=2) + "\n")
     return metrics
 
 
