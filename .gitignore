@@ -224,3 +224,6 @@ __marimo__/
 
 # dataset
 data/*
+
+# Local experiment checkpoints and metric histories
+artifacts/
