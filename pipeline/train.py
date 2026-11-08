@@ -1,4 +1,5 @@
 from copy import deepcopy
+from math import cos, pi
 from time import perf_counter
 
 import torch
@@ -7,7 +8,16 @@ from torch.nn import CrossEntropyLoss
 from utils.io import save_checkpoint
 
 
-def train_one_epoch(model, dataloader, criterion, optimizer, device):
+def warmup_cosine_factor(step, warmup_steps, total_steps):
+    """ViT's linear warmup followed by cosine decay to zero, per update."""
+    progress = min(max((step - warmup_steps) / (total_steps - warmup_steps), 0.0), 1.0)
+    factor = 0.5 * (1.0 + cos(pi * progress))
+    if warmup_steps:
+        factor *= min(1.0, step / warmup_steps)
+    return factor
+
+
+def train_one_epoch(model, dataloader, criterion, optimizer, device, scheduler=None):
     model.train()
     running_loss = 0.0
     total_samples = 0
@@ -19,6 +29,8 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device):
         loss = criterion(outputs, labels)
         loss.backward()
         optimizer.step()
+        if scheduler is not None:
+            scheduler.step()
         running_loss += loss.item() * images.size(0)
         total_samples += images.size(0)
 
@@ -45,24 +57,28 @@ def validate(model, dataloader, criterion, device):
 
 def train_model(model, train_dataloader, val_dataloader, num_epochs, learning_rate,
                 device, checkpoint_path=None, weight_decay=0.01,
-                enable_early_stopping = True, lr_patience=3, min_delta=0.001):
-    """Train up to num_epochs and restore the lowest-validation-loss weights.
+                enable_early_stopping=True, warmup_steps=None, min_delta=0.001):
+    """Train with warmup/cosine decay and restore the best-validation-accuracy weights.
 
-    Halve the learning rate after lr_patience + 1 stalled epochs. Stop after
-    early_stopping_patience epochs without a validation-loss drop of min_delta.
-    Checkpoints still track the actual minimum loss, including smaller drops.
-    History stays in memory; checkpoint file handling lives in utils.io.
+    learning_rate is the peak LR. Warmup defaults to 10% of planned updates,
+    adapting ViT's ImageNet pretraining schedule to this smaller experiment.
+    Set warmup_steps explicitly for a different budget, shorter than total_steps.
+    LR changes after every optimizer update; history records each epoch's start LR.
+    Optional early stopping counts ten stalled epochs after warmup, using accuracy
+    gains greater than min_delta. Disabling it allows the full cosine schedule.
     """
-    early_stopping_patience=10
+    early_stopping_patience = 10
 
     model.to(device)
     criterion = CrossEntropyLoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-    if enable_early_stopping:
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode="min", factor=0.5, patience=lr_patience,
-            threshold=min_delta, threshold_mode="abs", min_lr=1e-6,
-        )
+    steps_per_epoch = len(train_dataloader)
+    total_steps = num_epochs * steps_per_epoch
+    if warmup_steps is None:
+        warmup_steps = int(0.1 * total_steps)
+    scheduler = torch.optim.lr_scheduler.LambdaLR(
+        optimizer, lambda step: warmup_cosine_factor(step, warmup_steps, total_steps),
+    )
     history = {"train_loss": [], "val_loss": [], "val_accuracy": [],
                "learning_rate": [], "train_seconds": [], "validation_seconds": []}
     best_val_accuracy = patience_accuracy = -1.0
@@ -72,7 +88,9 @@ def train_model(model, train_dataloader, val_dataloader, num_epochs, learning_ra
         learning_rate_used = optimizer.param_groups[0]["lr"]
         # The .item() calls in these loops already wait for the GPU results.
         start = perf_counter()
-        train_loss = train_one_epoch(model, train_dataloader, criterion, optimizer, device)
+        train_loss = train_one_epoch(
+            model, train_dataloader, criterion, optimizer, device, scheduler,
+        )
         train_seconds = perf_counter() - start
 
         start = perf_counter()
@@ -94,30 +112,26 @@ def train_model(model, train_dataloader, val_dataloader, num_epochs, learning_ra
             if checkpoint_path is not None:
                 save_checkpoint(model, checkpoint_path, epoch, val_loss, val_accuracy)
 
-        # Small improvements can accumulate before resetting the patience counter.
-        if val_accuracy > patience_accuracy + min_delta:
-            patience_accuracy = val_accuracy
-            stalled_epochs = 0
-        else:
-            stalled_epochs += 1
-        if enable_early_stopping:
-            scheduler.step(val_accuracy)
+        # Warmup does not consume patience; small accuracy gains can accumulate.
+        if enable_early_stopping and epoch * steps_per_epoch >= warmup_steps:
+            if val_accuracy > patience_accuracy + min_delta:
+                patience_accuracy = val_accuracy
+                stalled_epochs = 0
+            else:
+                stalled_epochs += 1
 
         print(f"Epoch {epoch}/{num_epochs}: train loss={train_loss:.4f}, "
               f"val loss={val_loss:.4f}, val accuracy={val_accuracy:.4f}, "
-              f"lr={learning_rate_used:.2g}, "
+              f"lr_start={learning_rate_used:.2g}, "
               f"train={train_seconds:.2f}s, val={validation_seconds:.2f}s")
-        next_lr = optimizer.param_groups[0]["lr"]
-        if enable_early_stopping:
-            if next_lr < learning_rate_used:
-                print(f"Learning rate reduced to {next_lr:.2g}")
-            if stalled_epochs >= early_stopping_patience:
-                print(f"Early stopping: no meaningful validation-loss improvement "
-                    f"for {early_stopping_patience} epochs.")
-                break
+        if enable_early_stopping and stalled_epochs >= early_stopping_patience:
+            print(f"Early stopping: no meaningful validation-accuracy improvement "
+                  f"for {early_stopping_patience} epochs after warmup.")
+            break
 
     model.load_state_dict(best_weights)
     model.eval()
     print(f"Restored epoch {history['best_epoch']} "
-          f"(lowest validation loss={history['best_val_accuracy']:.4f})")
+          f"(highest validation accuracy={history['best_val_accuracy']:.4f})")
     return history
+
