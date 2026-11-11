@@ -87,3 +87,4 @@ class ResNet18(nn.Module):
 
         x = self.avgpool(x).flatten(1)
         return self.fc(x)
+

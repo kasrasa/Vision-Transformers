@@ -28,33 +28,49 @@ def patchify(image_set, patch_size):
 
 
 class PatchEmbeddingModel(nn.Module):
-    """Project patches and build the original ViT's input token sequence.
+    """Project patches and prepend one or two learned special tokens.
 
     embedding_dim is the flattened patch width (channels * patch_size ** 2).
     hidden_dim is the transformer's token width. Create this model once and reuse it.
     """
 
-    def __init__(self, embedding_dim=768, hidden_dim=192, num_patches=196):
+    def __init__(self, embedding_dim=768, hidden_dim=192, num_patches=196,
+                 num_special_tokens=1):
         super().__init__()
+        if num_special_tokens not in (1, 2):
+            raise ValueError("num_special_tokens must be 1 (CLS) or 2 (CLS and DIST)")
         self.embedding_dim = embedding_dim
         self.hidden_dim = hidden_dim
+        self.num_special_tokens = num_special_tokens
         self.embedder = nn.Linear(embedding_dim, hidden_dim)
         self.cls_token = nn.Parameter(torch.zeros(1, 1, hidden_dim))
-        self.positional_encoding = PositionalEncoding(hidden_dim, num_patches + 1)
+        if num_special_tokens == 2:
+            self.dist_token = nn.Parameter(torch.zeros(1, 1, hidden_dim))
+        self.positional_encoding = PositionalEncoding(hidden_dim, num_patches + num_special_tokens)
 
     def forward(self, x):
-        """Map [B, N, patch_width] to patch embeddings and [B, N + 1, hidden_dim]."""
+        """Return embeddings and positions for [CLS, optional DIST, patches].
+
+        The existing patches_with_cls_token key holds the entire sequence, with
+        shape [B, N + num_special_tokens, hidden_dim].
+        """
         embedded_patches = self.embedder(x)
-        tokens = torch.cat([self.cls_token.expand(x.size(0), -1, -1), embedded_patches], dim=1)
+        special_tokens = [self.cls_token.expand(x.size(0), -1, -1)]
+        if self.num_special_tokens == 2:
+            special_tokens.append(self.dist_token.expand(x.size(0), -1, -1))
+        tokens = torch.cat([*special_tokens, embedded_patches], dim=1)
         tokens = self.positional_encoding(tokens)
 
-        return {
+        result = {
             "embedded_patches": embedded_patches,
             "patches_with_cls_token": tokens,
             "cls_token": self.cls_token,
             "positional_encoding": self.positional_encoding.pe,
             "hidden_dim": self.hidden_dim,
         }
+        if self.num_special_tokens == 2:
+            result["dist_token"] = self.dist_token
+        return result
 
 class PositionalEncoding(nn.Module):
     """Learned absolute positions, including a position for the classification token."""
@@ -93,3 +109,4 @@ class SinusoidalPositionalEncoding(nn.Module):
         """
         x = x + self.pe[:, :x.size(1), :]
         return x
+

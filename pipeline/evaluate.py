@@ -4,7 +4,8 @@ import numpy as np
 import torch
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, confusion_matrix
 
-from utils.io import load_checkpoint
+from .checkpoints import load_checkpoint
+from .predictions import prediction_log_probs
 
 
 def evaluate_model(model, test_dataloader, device, checkpoint_path=None):
@@ -28,7 +29,12 @@ def evaluate_model(model, test_dataloader, device, checkpoint_path=None):
         for images, labels in test_dataloader:
             images, labels = images.to(device), labels.to(device)
             outputs = model(images)
-            total_loss += torch.nn.functional.cross_entropy(outputs, labels).item() * labels.size(0)
+            if isinstance(outputs, tuple):
+                outputs = prediction_log_probs(outputs)
+                total_loss += torch.nn.functional.nll_loss(outputs, labels, reduction="sum").item()
+            else:
+                # Preserve Part 1's original single-head loss calculation.
+                total_loss += torch.nn.functional.cross_entropy(outputs, labels).item() * labels.size(0)
             total_samples += labels.size(0)
             all_labels.extend(labels.cpu().numpy())
             all_predictions.extend(outputs.argmax(dim=1).cpu().numpy())
@@ -37,6 +43,7 @@ def evaluate_model(model, test_dataloader, device, checkpoint_path=None):
     metrics = {
         "accuracy": accuracy_score(all_labels, all_predictions),
         "f1_score": f1_score(all_labels, all_predictions, labels=class_labels, average="weighted", zero_division=0),
+        "macro_f1_score": f1_score(all_labels, all_predictions, labels=class_labels, average="macro", zero_division=0),
         "precision": precision_score(all_labels, all_predictions, labels=class_labels, average="weighted", zero_division=0),
         "recall": recall_score(all_labels, all_predictions, labels=class_labels, average="weighted", zero_division=0),
         "confusion_matrix": confusion_matrix(all_labels, all_predictions, labels=class_labels),
@@ -68,3 +75,4 @@ def calculate_ece(model_prediction, true_labels, num_bins=10):
             ece += np.abs(bin_accuracy - bin_confidence) * np.sum(bin_mask) / len(model_prediction)
 
     return ece
+

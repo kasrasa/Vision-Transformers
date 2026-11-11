@@ -25,3 +25,4 @@ def measure_inference_ms(timing_model, timing_images, timing_device, warmups=5, 
             synchronize_device(timing_device)
             times_ms.append((perf_counter() - start) * 1000)
     return median(times_ms)
+
