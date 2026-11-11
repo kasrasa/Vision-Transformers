@@ -8,11 +8,17 @@ from .checkpoints import load_checkpoint
 from .predictions import prediction_log_probs
 
 
-def evaluate_model(model, test_dataloader, device, checkpoint_path=None):
+def evaluate_model(model, test_dataloader, device, checkpoint_path=None, *, diagnostics=False):
     """Score fixed weights; evaluation never selects or overwrites a checkpoint.
 
     evaluation_seconds covers dataset loading, transfers, forward passes, and
     metrics. Checkpoint loading is outside it; evaluation writes no files.
+
+    Optional diagnostics add 10-bin, equal-width top-label ECE in [0, 1] and
+    multiclass Brier score (mean summed squared probability error) in [0, 2].
+    Confidence means are descriptive, not standalone performance measures.
+    Correct/incorrect subgroup NLL uses stable prediction log-probabilities;
+    subgroup means are None when the corresponding subgroup is empty.
     """
     device = torch.device(device)
     model.to(device)
@@ -23,12 +29,21 @@ def evaluate_model(model, test_dataloader, device, checkpoint_path=None):
     all_predictions = []
     total_loss = 0.0
     total_samples = 0
+    if diagnostics:
+        diagnostic_probabilities = []
+        diagnostic_nll = []
     start = perf_counter()
 
     with torch.no_grad():
         for images, labels in test_dataloader:
             images, labels = images.to(device), labels.to(device)
             outputs = model(images)
+            if diagnostics:
+                log_probs = prediction_log_probs(outputs)
+                diagnostic_probabilities.append(log_probs.exp().cpu().numpy())
+                diagnostic_nll.append(
+                    torch.nn.functional.nll_loss(log_probs, labels, reduction="none").cpu().numpy()
+                )
             if isinstance(outputs, tuple):
                 outputs = prediction_log_probs(outputs)
                 total_loss += torch.nn.functional.nll_loss(outputs, labels, reduction="sum").item()
@@ -49,6 +64,26 @@ def evaluate_model(model, test_dataloader, device, checkpoint_path=None):
         "confusion_matrix": confusion_matrix(all_labels, all_predictions, labels=class_labels),
         "loss": total_loss / total_samples,
     }
+    if diagnostics:
+        probabilities = np.concatenate(diagnostic_probabilities)
+        per_image_nll = np.concatenate(diagnostic_nll)
+        targets = np.asarray(all_labels)
+        correct = np.asarray(all_predictions) == targets
+        incorrect = ~correct
+        confidences = probabilities.max(axis=1)
+        one_hot = np.eye(probabilities.shape[1])[targets]
+        metrics.update(
+            ece=float(calculate_ece(probabilities, targets, num_bins=10)),
+            ece_bins=10,
+            brier_score=float(np.square(probabilities - one_hot).sum(axis=1).mean()),
+            mean_confidence=float(confidences.mean()),
+            mean_confidence_correct=float(confidences[correct].mean()) if correct.any() else None,
+            mean_confidence_incorrect=float(confidences[incorrect].mean()) if incorrect.any() else None,
+            nll_correct=float(per_image_nll[correct].mean()) if correct.any() else None,
+            nll_incorrect=float(per_image_nll[incorrect].mean()) if incorrect.any() else None,
+            num_correct=int(correct.sum()),
+            num_incorrect=int(incorrect.sum()),
+        )
     metrics["evaluation_seconds"] = perf_counter() - start
     return metrics
 
