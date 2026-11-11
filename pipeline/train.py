@@ -6,16 +6,7 @@ import torch
 from torch.nn import CrossEntropyLoss
 
 from utils.io import save_checkpoint
-
-
-def warmup_cosine_factor(step, warmup_steps, total_steps):
-    """ViT's linear warmup followed by cosine decay to zero, per update."""
-    progress = min(max((step - warmup_steps) / (total_steps - warmup_steps), 0.0), 1.0)
-    factor = 0.5 * (1.0 + cos(pi * progress))
-    if warmup_steps:
-        factor *= min(1.0, step / warmup_steps)
-    return factor
-
+from utils.scheduler import linear_scheduler, cosine_decay_scheduler
 
 def train_one_epoch(model, dataloader, criterion, optimizer, device, scheduler=None):
     model.train()
@@ -57,7 +48,7 @@ def validate(model, dataloader, criterion, device):
 
 def train_model(model, train_dataloader, val_dataloader, num_epochs, learning_rate,
                 device, checkpoint_path=None, weight_decay=0.01,
-                enable_early_stopping=True, warmup_steps=None, min_delta=0.001):
+                scheduler = "linear", warmup_steps=None, min_delta=0.001):
     """Train with warmup/cosine decay and restore the best-validation-accuracy weights.
 
     learning_rate is the peak LR. Warmup defaults to 10% of planned updates,
@@ -72,13 +63,13 @@ def train_model(model, train_dataloader, val_dataloader, num_epochs, learning_ra
     model.to(device)
     criterion = CrossEntropyLoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-    steps_per_epoch = len(train_dataloader)
-    total_steps = num_epochs * steps_per_epoch
-    if warmup_steps is None:
-        warmup_steps = int(0.1 * total_steps)
-    scheduler = torch.optim.lr_scheduler.LambdaLR(
-        optimizer, lambda step: warmup_cosine_factor(step, warmup_steps, total_steps),
-    )
+    if scheduler == "linear":
+        scheduler = linear_scheduler(optimizer, lr_patience=3, threshold=min_delta)
+    elif scheduler == "cosine_decay":
+        steps_per_epoch = len(train_dataloader)
+        total_steps = num_epochs * steps_per_epoch 
+        warmup_steps = int(0.1 * total_steps) if warmup_steps is None else warmup_steps
+        scheduler = cosine_decay_scheduler(optimizer, warmup_steps=warmup_steps, total_steps=total_steps)
     history = {"train_loss": [], "val_loss": [], "val_accuracy": [],
                "learning_rate": [], "train_seconds": [], "validation_seconds": []}
     best_val_accuracy = patience_accuracy = -1.0
@@ -113,7 +104,7 @@ def train_model(model, train_dataloader, val_dataloader, num_epochs, learning_ra
                 save_checkpoint(model, checkpoint_path, epoch, val_loss, val_accuracy)
 
         # Warmup does not consume patience; small accuracy gains can accumulate.
-        if enable_early_stopping and epoch * steps_per_epoch >= warmup_steps:
+        if scheduler and epoch * steps_per_epoch >= warmup_steps:
             if val_accuracy > patience_accuracy + min_delta:
                 patience_accuracy = val_accuracy
                 stalled_epochs = 0
@@ -124,7 +115,7 @@ def train_model(model, train_dataloader, val_dataloader, num_epochs, learning_ra
               f"val loss={val_loss:.4f}, val accuracy={val_accuracy:.4f}, "
               f"lr_start={learning_rate_used:.2g}, "
               f"train={train_seconds:.2f}s, val={validation_seconds:.2f}s")
-        if enable_early_stopping and stalled_epochs >= early_stopping_patience:
+        if scheduler and stalled_epochs >= early_stopping_patience:
             print(f"Early stopping: no meaningful validation-accuracy improvement "
                   f"for {early_stopping_patience} epochs after warmup.")
             break
