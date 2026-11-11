@@ -2,8 +2,15 @@
 
 from math import cos, pi
 
-from torch.optim.lr_scheduler import LambdaLR
+from torch.optim.lr_scheduler import LambdaLR, ReduceLROnPlateau
 
+
+def linear_scheduler_part1(optimizer, lr_patience=3, threshold=0.001, mode="min", min_lr=1e-6):
+    """Keep Part 1's original function name and plateau-reduction settings."""
+    return ReduceLROnPlateau(
+        optimizer, mode=mode, factor=0.5, patience=lr_patience,
+        threshold=threshold, threshold_mode="abs", min_lr=min_lr,
+    )
 
 def _warmup_decay_scheduler(optimizer, warmup_steps, total_steps, decay,
                             warmup_lr, min_lr):

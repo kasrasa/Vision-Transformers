@@ -7,7 +7,7 @@ import torch
 from torch.nn import CrossEntropyLoss
 
 from .checkpoints import save_checkpoint
-from .part1_scheduler import linear_scheduler
+from .scheduler import linear_scheduler_part1
 
 
 def train_one_epoch(model, dataloader, criterion, optimizer, device):
@@ -52,7 +52,7 @@ def train_model(model, train_dataloader, val_dataloader, num_epochs, learning_ra
     model.to(device)
     criterion = CrossEntropyLoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
-    scheduler = linear_scheduler(optimizer, lr_patience=lr_patience, threshold=min_delta)
+    scheduler = linear_scheduler_part1(optimizer, lr_patience=lr_patience, threshold=min_delta)
     history = {"train_loss": [], "val_loss": [], "val_accuracy": [],
                "learning_rate": [], "train_seconds": [], "validation_seconds": []}
     best_val_accuracy = patience_accuracy = -1.0
