@@ -9,13 +9,16 @@ from .predictions import prediction_log_probs, supervised_loss
 from .scheduler import cosine_decay_scheduler, linear_scheduler
 
 
-def train_one_epoch(model, dataloader, criterion, optimizer, device, scheduler):
+def train_one_epoch(model, dataloader, criterion, optimizer, device, scheduler, augment):
     model.train()
     running_loss = 0.0
     total_samples = 0
 
     for images, labels in dataloader:
         images, labels = images.to(device), labels.to(device)
+        if augment:
+            augment(images)
+            
         optimizer.zero_grad()
         loss = criterion(model(images), labels)
         loss.backward()
@@ -44,7 +47,7 @@ def validate(model, dataloader, device):
 def train_model(model, train_dataloader, val_dataloader, num_epochs, learning_rate,
                 device, checkpoint_path=None, weight_decay=0.01,
                 scheduler="linear", warmup_steps=None, min_delta=0.001,
-                early_stopping_patience=10, warmup_lr=1e-6, min_lr=0.0):
+                early_stopping_patience=10, warmup_lr=1e-6, min_lr=0.0, augment=None):
     """Train with per-update warmup/decay and restore highest-validation-accuracy weights.
 
     Warmup defaults to 10% of updates. Pass early_stopping_patience=None for a
@@ -71,7 +74,7 @@ def train_model(model, train_dataloader, val_dataloader, num_epochs, learning_ra
         learning_rate_used = optimizer.param_groups[0]["lr"]
         start = perf_counter()
         train_loss = train_one_epoch(
-            model, train_dataloader, supervised_loss, optimizer, device, lr_scheduler,
+            model, train_dataloader, supervised_loss, optimizer, device, lr_scheduler, augment = augment
         )
         train_seconds = perf_counter() - start
 
