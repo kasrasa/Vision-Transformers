@@ -21,10 +21,7 @@ def train_one_epoch(model, dataloader, optimizer, device, scheduler, criterion,
             images, labels = batch_transform(images, labels)
 
         optimizer.zero_grad()
-        if isinstance(criterion, classmethod):
-            loss = criterion(images, model(images), labels)
-        else:
-            loss = criterion(model(images), labels)
+        loss = criterion(images, model(images), labels)
         loss.backward()
         optimizer.step()
         scheduler.step()
@@ -49,14 +46,16 @@ def validate(model, dataloader, device):
 
 
 def train_model(model, train_dataloader, val_dataloader, num_epochs, learning_rate,
-                device, checkpoint_path=None, training_loss_fn=supervised_loss, weight_decay=0.01,
+                device, checkpoint_path=None, weight_decay=0.01,
                 scheduler="linear", warmup_steps=None, min_delta=0.001,
                 early_stopping_patience=10, warmup_lr=1e-6, min_lr=0.0,
-                batch_transform=None):
+                batch_transform=None, criterion=supervised_loss):
     """Train with per-update warmup/decay and restore highest-validation-accuracy weights.
 
     Warmup defaults to 10% of updates. Pass early_stopping_patience=None for a
-    fixed budget. For two heads, both learn the same labels; no teacher is used.
+    fixed budget. The default criterion supervises every head with the labels.
+    A custom criterion receives (images, outputs, targets) after batch mixing;
+    place any teacher on the same device before creating its criterion.
     Checkpoint ties keep the earlier epoch. min_delta affects stopping only.
     batch_transform receives a batch of images and labels and returns both;
     it is applied once during training, never during validation.
@@ -82,7 +81,7 @@ def train_model(model, train_dataloader, val_dataloader, num_epochs, learning_ra
         start = perf_counter()
         train_loss = train_one_epoch(
             model, train_dataloader, optimizer, device, lr_scheduler,
-            criterion=training_loss_fn, batch_transform=batch_transform
+            criterion=criterion, batch_transform=batch_transform
         )
         train_seconds = perf_counter() - start
 

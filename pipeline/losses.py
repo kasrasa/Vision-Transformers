@@ -1,14 +1,14 @@
 """Shared supervised loss and predictions for one- and two-head classifiers."""
 
-from math import log
+from math import isfinite, log
 
 import torch
 from torch.nn import functional as F
 import torch.nn as nn
 
 
-def supervised_loss(outputs, targets):
-    """Supervise each head with the same labels, weighting heads equally."""
+def supervised_loss(images, outputs, targets):
+    """Supervise each head equally; images are unused in this criterion."""
     heads = outputs if isinstance(outputs, tuple) else (outputs,)
     return sum(F.cross_entropy(head, targets) for head in heads) / len(heads)
 
@@ -22,12 +22,38 @@ def prediction_log_probs(outputs):
 
 
 class DistillationLoss(nn.Module):
-    def __init__(self, teacher, mode = "hard", alpha = 0.5, temperature = 1.0):
+    """CLS label loss plus DIST teacher loss, using DeiT's released KL scaling.
+
+    Ground-truth targets may already be mixed and smoothed. Teacher targets
+    receive no extra smoothing, and the teacher stays frozen in evaluation mode.
+    """
+
+    def __init__(self, teacher, mode="hard", alpha=0.5, temperature=1.0):
         super().__init__()
-        self.teacher = teacher
+        if mode not in ("hard", "soft"):
+            raise ValueError("mode must be 'hard' or 'soft'")
+        if not 0.0 <= alpha <= 1.0:
+            raise ValueError("alpha must be between 0 and 1")
+        if not isfinite(temperature) or temperature <= 0.0:
+            raise ValueError("temperature must be finite and positive")
+        self.teacher = teacher.requires_grad_(False).eval()
         self.mode = mode
-        self.alpha = alpha
-        self.temperature = temperature
+        self.alpha = float(alpha)
+        self.temperature = float(temperature)
+
+    @property
+    def config(self):
+        return {
+            "mode": self.mode,
+            "alpha": self.alpha,
+            "temperature": self.temperature,
+            "soft_normalization": "sum/numel" if self.mode == "soft" else None,
+        }
+
+    def train(self, mode=True):
+        super().train(mode)
+        self.teacher.eval()
+        return self
 
     def forward(self, images, outputs, targets):
         cls_logits, dist_logits = outputs
