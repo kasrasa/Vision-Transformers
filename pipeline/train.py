@@ -5,11 +5,11 @@ import torch
 from torch.nn import functional as F
 
 from .checkpoints import save_checkpoint
-from .predictions import prediction_log_probs, supervised_loss
+from .losses import prediction_log_probs, supervised_loss
 from .scheduler import cosine_decay_scheduler, linear_scheduler
 
 
-def train_one_epoch(model, dataloader, criterion, optimizer, device, scheduler,
+def train_one_epoch(model, dataloader, optimizer, device, scheduler, criterion,
                     batch_transform=None):
     model.train()
     running_loss = 0.0
@@ -21,7 +21,10 @@ def train_one_epoch(model, dataloader, criterion, optimizer, device, scheduler,
             images, labels = batch_transform(images, labels)
 
         optimizer.zero_grad()
-        loss = criterion(model(images), labels)
+        if isinstance(criterion, classmethod):
+            loss = criterion(images, model(images), labels)
+        else:
+            loss = criterion(model(images), labels)
         loss.backward()
         optimizer.step()
         scheduler.step()
@@ -46,7 +49,7 @@ def validate(model, dataloader, device):
 
 
 def train_model(model, train_dataloader, val_dataloader, num_epochs, learning_rate,
-                device, checkpoint_path=None, weight_decay=0.01,
+                device, checkpoint_path=None, training_loss_fn=supervised_loss, weight_decay=0.01,
                 scheduler="linear", warmup_steps=None, min_delta=0.001,
                 early_stopping_patience=10, warmup_lr=1e-6, min_lr=0.0,
                 batch_transform=None):
@@ -78,8 +81,8 @@ def train_model(model, train_dataloader, val_dataloader, num_epochs, learning_ra
         learning_rate_used = optimizer.param_groups[0]["lr"]
         start = perf_counter()
         train_loss = train_one_epoch(
-            model, train_dataloader, supervised_loss, optimizer, device, lr_scheduler,
-            batch_transform=batch_transform,
+            model, train_dataloader, optimizer, device, lr_scheduler,
+            criterion=training_loss_fn, batch_transform=batch_transform
         )
         train_seconds = perf_counter() - start
 
