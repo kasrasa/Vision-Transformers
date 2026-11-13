@@ -5,7 +5,7 @@ import torch
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, confusion_matrix
 
 from .checkpoints import load_checkpoint
-from .predictions import prediction_log_probs
+from .losses import prediction_log_probs
 
 
 def evaluate_model(model, test_dataloader, device, checkpoint_path=None, *, diagnostics=False):
