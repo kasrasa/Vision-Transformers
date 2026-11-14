@@ -1,0 +1,113 @@
+from time import perf_counter
+
+import numpy as np
+import torch
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score, confusion_matrix
+
+from .checkpoints import load_checkpoint
+from .losses import prediction_log_probs
+
+
+def evaluate_model(model, test_dataloader, device, checkpoint_path=None, *, diagnostics=False):
+    """Score fixed weights; evaluation never selects or overwrites a checkpoint.
+
+    evaluation_seconds covers dataset loading, transfers, forward passes, and
+    metrics. Checkpoint loading is outside it; evaluation writes no files.
+
+    Optional diagnostics add 10-bin, equal-width top-label ECE in [0, 1] and
+    multiclass Brier score (mean summed squared probability error) in [0, 2].
+    Confidence means are descriptive, not standalone performance measures.
+    Correct/incorrect subgroup NLL uses stable prediction log-probabilities;
+    subgroup means are None when the corresponding subgroup is empty.
+    """
+    device = torch.device(device)
+    model.to(device)
+    if checkpoint_path is not None:
+        load_checkpoint(model, checkpoint_path, device)
+    model.eval()
+    all_labels = []
+    all_predictions = []
+    total_loss = 0.0
+    total_samples = 0
+    if diagnostics:
+        diagnostic_probabilities = []
+        diagnostic_nll = []
+    start = perf_counter()
+
+    with torch.no_grad():
+        for images, labels in test_dataloader:
+            images, labels = images.to(device), labels.to(device)
+            outputs = model(images)
+            if diagnostics:
+                log_probs = prediction_log_probs(outputs)
+                diagnostic_probabilities.append(log_probs.exp().cpu().numpy())
+                diagnostic_nll.append(
+                    torch.nn.functional.nll_loss(log_probs, labels, reduction="none").cpu().numpy()
+                )
+            if isinstance(outputs, tuple):
+                outputs = prediction_log_probs(outputs)
+                total_loss += torch.nn.functional.nll_loss(outputs, labels, reduction="sum").item()
+            else:
+                # Preserve Part 1's original single-head loss calculation.
+                total_loss += torch.nn.functional.cross_entropy(outputs, labels).item() * labels.size(0)
+            total_samples += labels.size(0)
+            all_labels.extend(labels.cpu().numpy())
+            all_predictions.extend(outputs.argmax(dim=1).cpu().numpy())
+
+    class_labels = list(range(outputs.size(1)))
+    metrics = {
+        "accuracy": accuracy_score(all_labels, all_predictions),
+        "f1_score": f1_score(all_labels, all_predictions, labels=class_labels, average="weighted", zero_division=0),
+        "macro_f1_score": f1_score(all_labels, all_predictions, labels=class_labels, average="macro", zero_division=0),
+        "precision": precision_score(all_labels, all_predictions, labels=class_labels, average="weighted", zero_division=0),
+        "recall": recall_score(all_labels, all_predictions, labels=class_labels, average="weighted", zero_division=0),
+        "confusion_matrix": confusion_matrix(all_labels, all_predictions, labels=class_labels),
+        "loss": total_loss / total_samples,
+    }
+    if diagnostics:
+        probabilities = np.concatenate(diagnostic_probabilities)
+        per_image_nll = np.concatenate(diagnostic_nll)
+        targets = np.asarray(all_labels)
+        correct = np.asarray(all_predictions) == targets
+        incorrect = ~correct
+        confidences = probabilities.max(axis=1)
+        one_hot = np.eye(probabilities.shape[1])[targets]
+        metrics.update(
+            ece=float(calculate_ece(probabilities, targets, num_bins=10)),
+            ece_bins=10,
+            brier_score=float(np.square(probabilities - one_hot).sum(axis=1).mean()),
+            mean_confidence=float(confidences.mean()),
+            mean_confidence_correct=float(confidences[correct].mean()) if correct.any() else None,
+            mean_confidence_incorrect=float(confidences[incorrect].mean()) if incorrect.any() else None,
+            nll_correct=float(per_image_nll[correct].mean()) if correct.any() else None,
+            nll_incorrect=float(per_image_nll[incorrect].mean()) if incorrect.any() else None,
+            num_correct=int(correct.sum()),
+            num_incorrect=int(incorrect.sum()),
+        )
+    metrics["evaluation_seconds"] = perf_counter() - start
+    return metrics
+
+
+def calculate_ece(model_prediction, true_labels, num_bins=10):
+    """Top-label ECE for [N, classes] probabilities and [N] class indices.
+
+    Convert logits with softmax before calling. Confidence is the largest class
+    probability; accuracy is whether that class matches the target label.
+    """
+    model_prediction = np.asarray(model_prediction)
+    true_labels = np.asarray(true_labels)
+    confidences = model_prediction.max(axis=1)
+    predicted_labels = model_prediction.argmax(axis=1)
+    bins = np.linspace(0, 1, num_bins + 1)
+    # Interior edges assign both confidence 0 and confidence 1 to valid bins.
+    bin_indices = np.digitize(confidences, bins[1:-1])
+    ece = 0.0
+    for i in range(num_bins):
+        bin_mask = bin_indices == i
+        if np.sum(bin_mask) > 0:
+            bin_accuracy = np.mean(true_labels[bin_mask] == predicted_labels[bin_mask])
+            bin_confidence = np.mean(confidences[bin_mask])
+            ece += np.abs(bin_accuracy - bin_confidence) * np.sum(bin_mask) / len(model_prediction)
+
+    return ece
+
