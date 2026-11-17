@@ -87,4 +87,3 @@ class TransformerEncoderLayer(nn.Module):
         x = x + self.dropout(feedforward_output)
 
         return x
-

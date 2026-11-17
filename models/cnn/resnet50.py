@@ -107,4 +107,3 @@ class ResNet50(nn.Module):
         x = self.fc(x)
 
         return x
-

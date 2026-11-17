@@ -109,4 +109,3 @@ class SinusoidalPositionalEncoding(nn.Module):
         """
         x = x + self.pe[:, :x.size(1), :]
         return x
-

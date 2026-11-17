@@ -1,24 +1,51 @@
 # Vision-Transformers
-A repo to compare and experiment with different key ViTs.
 
+Experiments and implementation walkthroughs for the Vision Transformer article series.
 Run the notebooks from the repository root so local imports and data paths resolve.
 
 | Location | Responsibility |
 | --- | --- |
-| `models/` | ViT and CNN definitions, patch/token embeddings, encoder blocks, and prediction heads |
-| `datasets/imagenette.py` | Imagenette loading and image preprocessing |
-| `pipeline/part1_train.py` | Part 1's original training, checkpoint selection, and early stopping |
-| `pipeline/part1_scheduler.py` | Part 1's original validation-driven learning-rate reductions |
-| `pipeline/train.py` | Part 2 training and validation, including the fixed-budget A0/A1 runs |
-| `pipeline/scheduler.py` | Part 2 warmup with linear or cosine decay, updated with optimizer steps |
-| `pipeline/evaluate.py` | Classification metrics on selected model weights |
+| `models/part1_vit/` | Part 1 ViT backbone and original MLP-head builder |
+| `models/part2_deit/` | Part 2 linear-head ViT and two-token distillation student |
+| `models/part3_swin/window_utils.py` | Part 3 spatial window partitioning and reconstruction |
+| `models/common/` | Patch embeddings, encoder blocks, and heads reused across parts |
+| `models/cnn/` | Shared half-width ResNet-18 and ResNet-50 baselines |
+| `datasets/imagenette.py` | Imagenette loading and deterministic preprocessing |
+| `datasets/augmentation.py` | Training image transforms, Mixup/CutMix, and target smoothing |
+| `pipeline/part1_train.py` | Part 1 training, checkpoint selection, and early stopping |
+| `pipeline/train.py` | Fixed-budget training and validation used in Part 2 |
+| `pipeline/scheduler.py` | Part 1 plateau schedule and Part 2 warmup/decay schedules |
+| `pipeline/losses.py` | Supervision, distillation, and two-head probability fusion |
+| `pipeline/evaluate.py` | Classification and calibration metrics |
 | `pipeline/inference.py` | Device synchronization and inference timing |
-| `pipeline/predictions.py` | Shared prediction and two-head probability-fusion rules |
-| `pipeline/checkpoints.py` | Checkpoint loading/saving and JSON experiment results |
-| `visualization/plots.py` | Reusable plotting helpers |
-| `part1.ipynb` | Part 1 component walkthrough and baseline experiments |
-| `patch_embedding.ipynb` | Earlier component/experiment notebook, updated to the same package imports |
-| `part2.ipynb` | Part 2 experiment orchestration, starting with the A0/A1 scheduler comparison |
-| `article-results/` | Article drafts, experiment plans, and existing figures/results |
+| `pipeline/checkpoints.py` | Checkpoint loading/saving and result tables |
+| `pipeline/experiment_utils.py` | Shared seed resetting and JSON experiment metadata |
+| `visualization/plots.py` | Patch displays and training curves |
+| `visualization/windows.py` | Window partition and reconstruction displays |
+| `part1.ipynb` | Part 1 component walkthrough and CNN/ViT baseline experiments |
+| `part2.ipynb` | Part 2 training recipe, distillation, and checkpoint evaluation |
+| `part3.ipynb` | Part 3 window mechanics, score-count scaling, and dataset setup |
+| `article-results/part3/draft.md` | Revised Part 3 article opening |
 
-Training remains explicit in the notebook cells. Part 1 uses its original `linear_scheduler` function, which reduces the learning rate based on validation loss, with early stopping enabled and the existing maximum epoch limits preserved. Its training path is independent of the new Part 2 warmup/decay schedules. The published Part 1 article measurements have not been replaced by new training runs.
+Model imports identify the article part explicitly:
+
+```python
+from models.part1_vit import build_vision_transformer
+from models.part2_deit import (
+    build_vision_transformer_single_classifier,
+    build_distilled_vision_transformer,
+)
+from models.part3_swin import window_partition, window_reverse
+from models.cnn import ResNet18
+```
+
+Training and experiment orchestration remain explicit in the notebooks. Part 1
+retains its original plateau schedule and early stopping. Part 2 retains its
+existing model configurations, training budget, checkpoint selection, and saved
+results; only imports and shared setup helpers have moved.
+
+Part 3 currently implements window mechanics. Its small grid and synthetic token
+examples run before Imagenette is loaded. The optional RGB example uses the local
+image when available. The final dataset section retains the Part 2 split policy
+for later training comparisons. Window attention, shifted windows, patch merging,
+and a full Swin classifier are subsequent implementation milestones.
